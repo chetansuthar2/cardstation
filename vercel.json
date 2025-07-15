@@ -1,5 +1,8 @@
 {
   "buildCommand": "pnpm install && pnpm run build",
-  "installCommand": "pnpm install --unsafe-perm",
-  "framework": "nextjs"
+  "installCommand": "pnpm install --unsafe-perm --enable-pre-post-scripts",
+  "framework": "nextjs",
+  "env": {
+    "PNPM_FLAGS": "--unsafe-perm --enable-pre-post-scripts"
+  }
 }

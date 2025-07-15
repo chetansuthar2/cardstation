@@ -4,3 +4,6 @@ enable-pre-post-scripts=true
 # Allow sharp package to run build scripts
 # This is needed for image optimization in Next.js
 unsafe-perm=true
+
+# Specifically allow sharp to run build scripts
+scripts-prepend-node-path=true
