@@ -264,9 +264,8 @@ class DatabaseStore {
       console.log("Sending entry data to API:", entryData);
 
       try {
-        // Try smartidcard API first (deployed or local)
-        const apiUrl = process.env.NEXT_PUBLIC_SMARTIDCARD_API_URL || "http://localhost:3001";
-        const res = await fetch(`${apiUrl}/api/entries`, {
+        // Try local MongoDB API first
+        const res = await fetch(`/api/entries`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -276,7 +275,7 @@ class DatabaseStore {
 
         if (res.ok) {
           const data = await res.json();
-          console.log("✅ Entry recorded via API:", data);
+          console.log("✅ Entry recorded via local MongoDB:", data);
           return {
             ...data,
             entryTime: new Date(data.entry_time),
@@ -285,10 +284,37 @@ class DatabaseStore {
             updatedAt: new Date(data.updated_at || data.entry_time)
           };
         } else {
-          throw new Error("API failed");
+          throw new Error("Local MongoDB API failed");
         }
-      } catch (apiError) {
-        console.warn("⚠️ API not available, using localStorage fallback");
+      } catch (localError) {
+        console.warn("⚠️ Local MongoDB not available, trying smartidcard API");
+        try {
+          // Fallback to smartidcard API
+          const apiUrl = process.env.NEXT_PUBLIC_SMARTIDCARD_API_URL || "http://localhost:3001";
+          const res = await fetch(`${apiUrl}/api/entries`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(entryData),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            console.log("✅ Entry recorded via smartidcard API:", data);
+            return {
+              ...data,
+              entryTime: new Date(data.entry_time),
+              exitTime: data.exit_time ? new Date(data.exit_time) : undefined,
+              createdAt: new Date(data.created_at || data.entry_time),
+              updatedAt: new Date(data.updated_at || data.entry_time)
+            };
+          } else {
+            throw new Error("Smartidcard API also failed");
+          }
+        } catch (apiError) {
+          console.warn("⚠️ Both APIs failed, using localStorage fallback");
+        }
 
         // Fallback to localStorage
         const existingEntries = this.loadEntriesFromLocal();

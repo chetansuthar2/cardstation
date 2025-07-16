@@ -491,24 +491,137 @@ export default function IDCardStation() {
     try {
       setCameraActive(true)
       setVerificationStatus("scanning")
+      setLiveDetectionStatus("Starting camera for face verification...")
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: "user", // Front camera for face verification
-        },
-      })
+      // Check if getUserMedia is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera not supported by this browser")
+      }
 
-      if (videoRef.current) {
+      let stream
+      try {
+        // Try front camera first (ideal for face verification)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640, min: 320 },
+            height: { ideal: 480, min: 240 },
+            facingMode: "user", // Front camera for face verification
+          },
+        })
+        setLiveDetectionStatus("✅ Front camera active - Position your face in the frame")
+      } catch (frontError) {
+        console.warn("Front camera failed, trying any available camera:", frontError)
+        try {
+          // Fallback to any available camera
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 640, min: 320 },
+              height: { ideal: 480, min: 240 },
+            },
+          })
+          setLiveDetectionStatus("✅ Camera active - Position your face in the frame")
+        } catch (anyError) {
+          console.error("No camera available:", anyError)
+          throw anyError
+        }
+      }
+
+      if (videoRef.current && stream) {
         videoRef.current.srcObject = stream
+
+        // Wait for video to be ready
+        await new Promise((resolve, reject) => {
+          if (videoRef.current) {
+            videoRef.current.onloadedmetadata = () => resolve(true)
+            videoRef.current.onerror = reject
+          }
+        })
+
         await videoRef.current.play()
+        setLiveDetectionStatus("📹 Camera ready - Look at the camera for face verification")
+        console.log("✅ Face verification camera started successfully")
       }
     } catch (error) {
-      console.error("Camera access denied:", error)
-      alert("Please allow camera access for face verification")
+      console.error("Camera access error:", error)
       setCameraActive(false)
       setVerificationStatus("idle")
+      setLiveDetectionStatus("")
+
+      // Provide specific error messages
+      if (error instanceof Error) {
+        if (error.name === "NotAllowedError") {
+          alert(
+            "🚫 Camera Permission Denied!\n\n" +
+            "To fix this:\n" +
+            "1. Click the camera icon (🎥) in your browser's address bar\n" +
+            "2. Select 'Allow' for camera access\n" +
+            "3. Refresh the page and try again\n\n" +
+            "Or check your browser settings to allow camera access for this site."
+          )
+        } else if (error.name === "NotFoundError") {
+          alert(
+            "📷 No Camera Found!\n\n" +
+            "No camera detected on this device.\n" +
+            "Please ensure:\n" +
+            "• Your device has a working camera\n" +
+            "• Camera is not being used by another app\n" +
+            "• Camera drivers are installed"
+          )
+        } else if (error.name === "NotReadableError") {
+          alert(
+            "⚠️ Camera In Use!\n\n" +
+            "Camera is already being used by another application.\n" +
+            "Please:\n" +
+            "• Close other apps using the camera\n" +
+            "• Refresh this page\n" +
+            "• Try again"
+          )
+        } else if (error.name === "OverconstrainedError") {
+          alert(
+            "🔧 Camera Settings Issue!\n\n" +
+            "Camera doesn't support the required settings.\n" +
+            "This usually resolves by refreshing the page."
+          )
+        } else {
+          alert(
+            "❌ Camera Access Failed!\n\n" +
+            `Error: ${error.message}\n\n` +
+            "Please try:\n" +
+            "• Refreshing the page\n" +
+            "• Checking camera permissions\n" +
+            "• Using a different browser"
+          )
+        }
+      }
+    }
+  }
+
+  // Check camera permissions
+  const checkCameraPermissions = async (): Promise<boolean> => {
+    try {
+      if (!navigator.permissions) {
+        console.warn("Permissions API not supported")
+        return true // Assume permission granted if API not available
+      }
+
+      const permission = await navigator.permissions.query({ name: 'camera' as PermissionName })
+      console.log("Camera permission status:", permission.state)
+
+      if (permission.state === 'denied') {
+        alert(
+          "🚫 Camera Permission Denied!\n\n" +
+          "Camera access is blocked. To fix this:\n" +
+          "1. Click the camera icon (🎥) in your browser's address bar\n" +
+          "2. Select 'Allow' for camera access\n" +
+          "3. Refresh the page and try again"
+        )
+        return false
+      }
+
+      return true
+    } catch (error) {
+      console.warn("Could not check camera permissions:", error)
+      return true // Proceed anyway if permission check fails
     }
   }
 
@@ -521,6 +634,7 @@ export default function IDCardStation() {
     }
     setCameraActive(false)
     setVerificationStatus("idle")
+    setLiveDetectionStatus("")
   }
 
   // Capture current frame from video for face comparison
@@ -1354,9 +1468,39 @@ export default function IDCardStation() {
                 {/* Face Verification Status */}
                 <div className="mt-4 space-y-3">
                   {verificationStatus === "idle" && qrValidated && (
-                    <Button onClick={startCamera} className="w-full" variant="default">
+                    <Button
+                      onClick={async () => {
+                        const hasPermission = await checkCameraPermissions()
+                        if (hasPermission) {
+                          startCamera()
+                        }
+                      }}
+                      className="w-full"
+                      variant="default"
+                    >
                       <Camera className="mr-2 h-4 w-4" />
                       Start Live Face Verification
+                    </Button>
+                  )}
+
+                  {/* Camera Test Button for Debugging */}
+                  {verificationStatus === "idle" && qrValidated && (
+                    <Button
+                      onClick={async () => {
+                        try {
+                          const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+                          alert("✅ Camera test successful! Camera is working.")
+                          stream.getTracks().forEach(track => track.stop())
+                        } catch (error) {
+                          console.error("Camera test failed:", error)
+                          alert(`❌ Camera test failed: ${error.message}`)
+                        }
+                      }}
+                      className="w-full"
+                      variant="outline"
+                      size="sm"
+                    >
+                      🔧 Test Camera Access
                     </Button>
                   )}
 

@@ -68,7 +68,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    console.log("Received entry body:", body)
+    console.log("📝 Received entry body:", body)
+    console.log("🔗 MongoDB URI available:", !!process.env.MONGODB_URI)
 
     if (!clientPromise) {
       return NextResponse.json({ error: "Database not available" }, { status: 503 })
@@ -132,7 +133,9 @@ export async function POST(req: NextRequest) {
       }
 
       const result = await entries.insertOne(newEntry)
-      console.log("Entry recorded for student:", body.student_name)
+      console.log("✅ Entry recorded for student:", body.student_name)
+      console.log("📊 Entry ID:", result.insertedId.toString())
+      console.log("💾 Entry data saved:", newEntry)
       return NextResponse.json({ ...newEntry, id: result.insertedId.toString() }, { status: 201 })
     }
   } catch (error) {
