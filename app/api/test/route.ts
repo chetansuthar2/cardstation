@@ -22,14 +22,40 @@ export async function GET(req: NextRequest) {
     }
 
     const db = client.db("idcard")
-    const students = db.collection("students")
-    const count = await students.countDocuments()
-    
-    return NextResponse.json({ 
-      status: "success", 
+
+    // Check collections
+    const collections = await db.listCollections().toArray()
+    const collectionNames = collections.map(c => c.name)
+
+    // Count documents in different collections
+    let studentsCount = 0
+    let entriesCount = 0
+
+    try {
+      const students = db.collection("students")
+      studentsCount = await students.countDocuments()
+    } catch (e) {
+      console.log("Students collection error:", e)
+    }
+
+    try {
+      const entries = db.collection("entry_logs")
+      entriesCount = await entries.countDocuments()
+    } catch (e) {
+      console.log("Entry_logs collection error:", e)
+    }
+
+    return NextResponse.json({
+      status: "success",
       message: "MongoDB connected successfully",
-      studentsCount: count,
-      database: "idcard"
+      database: "idcard",
+      collections: collectionNames,
+      studentsCount: studentsCount,
+      entriesCount: entriesCount,
+      env: {
+        hasMongoUri: !!process.env.MONGODB_URI,
+        nodeEnv: process.env.NODE_ENV
+      }
     })
   } catch (error) {
     console.error("MongoDB test error:", error)

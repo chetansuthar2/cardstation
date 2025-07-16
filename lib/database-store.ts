@@ -122,23 +122,38 @@ class DatabaseStore {
 
   async getStudents(): Promise<StudentWithDates[]> {
     try {
-      // Try smartidcard API first (deployed or local)
-      const apiUrl = process.env.NEXT_PUBLIC_SMARTIDCARD_API_URL || "http://localhost:3001";
-      const res = await fetch(`${apiUrl}/api/students`);
+      // Try local MongoDB API first
+      const res = await fetch(`/api/students`);
       if (res.ok) {
         const data = await res.json();
-        console.log("✅ Students loaded from smartidcard API:", data.length);
+        console.log("✅ Students loaded from local MongoDB:", data.length);
         return data.map((s: any) => ({
           ...s,
           createdAt: new Date(s.createdAt || s.created_at || new Date()),
           updatedAt: new Date(s.updatedAt || s.updated_at || new Date()),
         }));
       } else {
-        throw new Error("Smartidcard API failed");
+        throw new Error("Local MongoDB API failed");
       }
     } catch (error) {
-      console.warn("⚠️ Smartidcard API not available, using localStorage fallback");
-      // Fallback to localStorage
+      console.warn("⚠️ Local MongoDB not available, trying smartidcard API");
+      try {
+        // Fallback to smartidcard API
+        const apiUrl = process.env.NEXT_PUBLIC_SMARTIDCARD_API_URL || "http://localhost:3001";
+        const res = await fetch(`${apiUrl}/api/students`);
+        if (res.ok) {
+          const data = await res.json();
+          console.log("✅ Students loaded from smartidcard API:", data.length);
+          return data.map((s: any) => ({
+            ...s,
+            createdAt: new Date(s.createdAt || s.created_at || new Date()),
+            updatedAt: new Date(s.updatedAt || s.updated_at || new Date()),
+          }));
+        }
+      } catch (apiError) {
+        console.warn("⚠️ Smartidcard API also failed, using localStorage fallback");
+      }
+      // Final fallback to localStorage
       const localStudents = this.loadStudentsFromLocal();
       console.log("✅ Students loaded from localStorage:", localStudents.length);
       return localStudents;
@@ -147,25 +162,42 @@ class DatabaseStore {
 
   async getStudentByAppNumber(appNumber: string): Promise<StudentWithDates | null> {
     try {
-      // Try smartidcard API first (deployed or local)
-      const apiUrl = process.env.NEXT_PUBLIC_SMARTIDCARD_API_URL || "http://localhost:3001";
-      const res = await fetch(`${apiUrl}/api/students?application_number=${encodeURIComponent(appNumber)}`);
+      // Try local MongoDB API first
+      const res = await fetch(`/api/students?application_number=${encodeURIComponent(appNumber)}`);
       if (res.ok) {
         const data = await res.json();
         if (!data || data.length === 0) return null;
         const s = data[0];
-        console.log("✅ Student found via smartidcard API:", s.name);
+        console.log("✅ Student found via local MongoDB:", s.student_name || s.name);
         return {
           ...s,
           createdAt: new Date(s.createdAt || s.created_at || new Date()),
           updatedAt: new Date(s.updatedAt || s.updated_at || new Date()),
         };
       } else {
-        throw new Error("Smartidcard API failed");
+        throw new Error("Local MongoDB API failed");
       }
     } catch (error) {
-      console.warn("⚠️ Smartidcard API not available, using localStorage fallback");
-      // Fallback to localStorage
+      console.warn("⚠️ Local MongoDB not available, trying smartidcard API");
+      try {
+        // Fallback to smartidcard API
+        const apiUrl = process.env.NEXT_PUBLIC_SMARTIDCARD_API_URL || "http://localhost:3001";
+        const res = await fetch(`${apiUrl}/api/students?application_number=${encodeURIComponent(appNumber)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!data || data.length === 0) return null;
+          const s = data[0];
+          console.log("✅ Student found via smartidcard API:", s.name);
+          return {
+            ...s,
+            createdAt: new Date(s.createdAt || s.created_at || new Date()),
+            updatedAt: new Date(s.updatedAt || s.updated_at || new Date()),
+          };
+        }
+      } catch (apiError) {
+        console.warn("⚠️ Smartidcard API also failed, using localStorage fallback");
+      }
+      // Final fallback to localStorage
       const localStudents = this.loadStudentsFromLocal();
       const student = localStudents.find(s => s.application_number === appNumber);
       if (student) {
