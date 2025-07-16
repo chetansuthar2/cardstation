@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import clientPromise from "@/lib/mongodb"
-import { ObjectId } from "mongodb"
+
+let ObjectId: any = null
+try {
+  const mongodb = require("mongodb")
+  ObjectId = mongodb.ObjectId
+} catch (error) {
+  console.warn("MongoDB ObjectId not available")
+}
 
 export async function GET(req: NextRequest) {
   try {
