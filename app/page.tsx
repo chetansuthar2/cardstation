@@ -97,6 +97,40 @@ export default function IDCardStation() {
     }
   }
 
+  // Text-to-Speech function for face verification success messages
+  const speakFaceVerificationMessage = (studentName: string, isEntry: boolean = true) => {
+    try {
+      // Check if speech synthesis is supported
+      if ('speechSynthesis' in window) {
+        // Cancel any ongoing speech
+        window.speechSynthesis.cancel()
+
+        // Create appropriate message based on entry type
+        const message = isEntry
+          ? `Have a good day`
+          : `Thank you for coming, ${studentName}! See you tomorrow.`
+
+        // Create speech utterance
+        const utterance = new SpeechSynthesisUtterance(message)
+
+        // Configure speech settings
+        utterance.rate = 0.9 // Slightly slower for clarity
+        utterance.pitch = 1.0 // Normal pitch
+        utterance.volume = 0.8 // 80% volume
+        utterance.lang = 'en-IN' // Indian English accent
+
+        // Speak the message
+        window.speechSynthesis.speak(utterance)
+
+        console.log(`🔊 Face Verification Success - Speaking: "${message}"`)
+      } else {
+        console.warn("🔇 Text-to-speech not supported in this browser")
+      }
+    } catch (error) {
+      console.error("🔇 Speech synthesis error:", error)
+    }
+  }
+
   // Check if student will be making an entry (first scan today) and speak welcome message immediately
   const checkAndSpeakEntryMessage = async (student: any) => {
     try {
@@ -123,6 +157,21 @@ export default function IDCardStation() {
       // Default to welcome message if we can't determine
       const studentName = student.name || student.student_name || "Student"
       speakMessage(studentName, true)
+    }
+  }
+
+  // Check if current student scan will be an exit
+  const checkIfExit = async (student: any): Promise<boolean> => {
+    try {
+      const todaysEntries = await dbStore.getTodayEntries()
+      const existingEntry = todaysEntries.find((entry: any) =>
+        entry.student_id === student.id &&
+        (!entry.exit_time && !entry.exitTime) // No exit time means still inside
+      )
+      return !!existingEntry // If existing entry found, this will be an exit
+    } catch (error) {
+      console.error("Error checking if exit:", error)
+      return false // Default to entry if we can't determine
     }
   }
 
@@ -950,10 +999,27 @@ export default function IDCardStation() {
           setVerificationStatus("success")
           setLiveDetectionStatus(`✅ Live face verification successful! Match: ${finalScore}% | Liveness: ${livenessScore}%`)
 
-          // Show success message
+          // 🔊 Speak appropriate face verification success message
+          if (currentStudent) {
+            checkIfExit(currentStudent).then(isExit => {
+              const studentName = currentStudent.name || "Student"
+              if (isExit) {
+                console.log(`🔊 Speaking exit message after face verification for ${studentName}`)
+                speakFaceVerificationMessage(studentName, false) // "Thank you for coming, [Name]! See you tomorrow."
+              } else {
+                console.log(`🔊 Speaking entry success message after face verification for ${studentName}`)
+                speakFaceVerificationMessage(studentName, true) // "Have a good day"
+              }
+            })
+          }
+
+          // Show success message (without popup alert)
           setTimeout(() => {
             if (currentStudent) {
-              alert(`✅ Live Face Verification Successful!\n\n👤 Student: ${currentStudent.name}\n🎯 Match Score: ${finalScore}%\n💓 Liveness Score: ${livenessScore}%\n👁️ Blink Detected: ${blinkDetected ? 'Yes' : 'No'}\n\n📝 Recording entry...`)
+              console.log(`✅ Live Face Verification Successful for ${currentStudent.name}`)
+              console.log(`🎯 Match Score: ${finalScore}%`)
+              console.log(`💓 Liveness Score: ${livenessScore}%`)
+              console.log(`👁️ Blink Detected: ${blinkDetected ? 'Yes' : 'No'}`)
             }
           }, 500)
 
@@ -1025,19 +1091,10 @@ export default function IDCardStation() {
       console.log(`Verification Score: ${faceMatchScore}%`)
       console.log(`Timestamp: ${new Date().toLocaleString()}`)
 
-      // 🔊 Only speak exit message here (welcome message was already spoken during QR validation)
-      if (!isEntry) {
-        const studentName = currentStudent.name || "Student"
-        console.log(`🔊 Speaking exit message after face verification for ${studentName}`)
-        console.log(`🔊 Student object:`, currentStudent)
-        speakMessage(studentName, false)
-      }
-
       // Show success notification
       setQrScanStatus(`✅ ${entryType} recorded successfully for ${currentStudent.name}`)
 
-      // Alert user to manually refresh admin panel
-      alert(`✅ ${entryType} Recorded Successfully!\n\nStudent: ${currentStudent.name}\nTime: ${new Date().toLocaleString()}\n\n📋 Please manually refresh Admin Panel to see updated data.`)
+      console.log(`🔊 Audio message for ${entryType} was already handled during face verification`)
 
       console.log(`📡 Entry recorded: ${entryType} for ${currentStudent.name} at ${new Date().toLocaleString()}`)
 
