@@ -21,8 +21,6 @@ import {
   RotateCcw,
   Scan,
   Database,
-  Wifi,
-  WifiOff,
   Shield,
 } from "lucide-react"
 import { dbStore, type Student, type EntryLog } from "@/lib/database-store"
@@ -43,7 +41,10 @@ export default function IDCardStation() {
   const [showTodayHistory, setShowTodayHistory] = useState(false)
   const [todayEntries, setTodayEntries] = useState<EntryLog[]>([])
   const [faceMatchScore, setFaceMatchScore] = useState<number | null>(null)
-  const [scanningForQR, setScanningForQR] = useState(false)
+  // const [scanningForQR, setScanningForQR] = useState(false) // Removed - not needed
+  const [qrScanTimeout, setQrScanTimeout] = useState(false)
+  const [scanStartTime, setScanStartTime] = useState<number | null>(null)
+  // Speech is always enabled - no user control needed
   const [qrScanStatus, setQrScanStatus] = useState("")
   const [liveDetectionStatus, setLiveDetectionStatus] = useState("")
   const [blinkDetected, setBlinkDetected] = useState(false)
@@ -59,7 +60,71 @@ export default function IDCardStation() {
   const qrVideoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const qrCanvasRef = useRef<HTMLCanvasElement>(null)
+  const qrOverlayCanvasRef = useRef<HTMLCanvasElement>(null)
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Text-to-Speech function for welcome/goodbye message (always enabled)
+  const speakMessage = (studentName: string, isEntry: boolean = true) => {
+    try {
+      // Check if speech synthesis is supported
+      if ('speechSynthesis' in window) {
+        // Cancel any ongoing speech
+        window.speechSynthesis.cancel()
+
+        // Create appropriate message based on entry type
+        const message = isEntry
+          ? `Hi ${studentName}, welcome to Docter Kiran and Pallavi Patel Global University`
+          : `Thank you for coming, ${studentName}! See you tomorrow.`
+
+        // Create speech utterance
+        const utterance = new SpeechSynthesisUtterance(message)
+
+        // Configure speech settings
+        utterance.rate = 0.9 // Slightly slower for clarity
+        utterance.pitch = 1.0 // Normal pitch
+        utterance.volume = 0.8 // 80% volume
+        utterance.lang = 'en-IN' // Indian English accent
+
+        // Speak the message
+        window.speechSynthesis.speak(utterance)
+
+        console.log(`🔊 Speaking: "${message}"`)
+      } else {
+        console.warn("🔇 Text-to-speech not supported in this browser")
+      }
+    } catch (error) {
+      console.error("🔇 Speech synthesis error:", error)
+    }
+  }
+
+  // Check if student will be making an entry (first scan today) and speak welcome message immediately
+  const checkAndSpeakEntryMessage = async (student: any) => {
+    try {
+      // Check if student already has an entry today without exit
+      const todaysEntries = await dbStore.getTodayEntries()
+      const existingEntry = todaysEntries.find((entry: any) =>
+        entry.student_id === student.id &&
+        (!entry.exit_time && !entry.exitTime) // No exit time means still inside
+      )
+
+      if (!existingEntry) {
+        // This will be an entry (first scan today), speak welcome message immediately
+        const studentName = student.name || student.student_name || "Student"
+        console.log(`🔊 First scan today for ${studentName} - speaking welcome message`)
+        console.log(`🔊 Student object:`, student)
+        speakMessage(studentName, true)
+      } else {
+        // This will be an exit, don't speak now (will speak after face verification)
+        const studentName = student.name || student.student_name || "Student"
+        console.log(`🔊 Exit scan for ${studentName} - will speak thank you message after face verification`)
+      }
+    } catch (error) {
+      console.error("Error checking entry status:", error)
+      // Default to welcome message if we can't determine
+      const studentName = student.name || student.student_name || "Student"
+      speakMessage(studentName, true)
+    }
+  }
 
   useEffect(() => {
     // Clear all entry data on app start
@@ -234,32 +299,66 @@ export default function IDCardStation() {
 
   // Real QR Code detection using jsQR library
   const detectQRCode = (): string | null => {
-    if (!qrVideoRef.current || !qrCanvasRef.current) return null
+    if (!qrVideoRef.current || !qrCanvasRef.current) {
+      console.log("❌ QR Detection: Missing video or canvas ref")
+      return null
+    }
 
     const video = qrVideoRef.current
     const canvas = qrCanvasRef.current
     const ctx = canvas.getContext("2d")
 
-    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return null
+    if (!ctx) {
+      console.log("❌ QR Detection: Cannot get canvas context")
+      return null
+    }
+
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      console.log("❌ QR Detection: Video not ready", { width: video.videoWidth, height: video.videoHeight })
+      return null
+    }
 
     try {
       // Set canvas size to match video
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
 
-      // Draw current video frame to canvas
+      // Draw current video frame to canvas with better quality
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
       // Get image data for QR detection
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
-      // Use jsQR library for actual QR code detection
+      // Use jsQR library with optimized settings for instant detection (Google Lens style)
+      console.log("🔍 QR Detection: Analyzing frame", { width: imageData.width, height: imageData.height })
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: "dontInvert",
+        inversionAttempts: "attemptBoth", // Try both normal and inverted
       })
 
-      if (code) {
-        console.log("QR Code detected:", code.data)
+      if (code && code.data) {
+        console.log("🎯 QR Code detected instantly:", code.data)
+
+        // Visual feedback - draw detection box (like Google Lens) - simplified
+        if (code.location && qrOverlayCanvasRef.current) {
+          const overlayCanvas = qrOverlayCanvasRef.current
+          const overlayCtx = overlayCanvas.getContext("2d")
+          if (overlayCtx) {
+            overlayCanvas.width = video.videoWidth
+            overlayCanvas.height = video.videoHeight
+            overlayCtx.strokeStyle = '#00ff00'
+            overlayCtx.lineWidth = 4
+            overlayCtx.beginPath()
+            overlayCtx.moveTo(code.location.topLeftCorner.x, code.location.topLeftCorner.y)
+            overlayCtx.lineTo(code.location.topRightCorner.x, code.location.topRightCorner.y)
+            overlayCtx.lineTo(code.location.bottomRightCorner.x, code.location.bottomRightCorner.y)
+            overlayCtx.lineTo(code.location.bottomLeftCorner.x, code.location.bottomLeftCorner.y)
+            overlayCtx.closePath()
+            overlayCtx.stroke()
+          }
+        }
+
         return code.data
       }
 
@@ -274,7 +373,8 @@ export default function IDCardStation() {
   const startQRScanner = async () => {
     try {
       setQrScannerActive(true)
-      setScanningForQR(true)
+      setQrScanTimeout(false)
+      setScanStartTime(Date.now())
       setQrScanStatus("Starting camera...")
 
       // Ensure we have student data loaded
@@ -286,8 +386,9 @@ export default function IDCardStation() {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 },
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
+            frameRate: { ideal: 30, min: 15 },
           },
         })
         setQrScanStatus(`Back camera active - Point at QR code (${availableStudents.length} students loaded)`)
@@ -325,7 +426,6 @@ export default function IDCardStation() {
     } catch (error) {
       console.error("QR Scanner access error:", error)
       setQrScannerActive(false)
-      setScanningForQR(false)
       setQrScanStatus("")
 
       if (error instanceof Error) {
@@ -357,17 +457,36 @@ export default function IDCardStation() {
         return
       }
 
+      // Check if 2 seconds have passed without detection
+      if (scanStartTime && Date.now() - scanStartTime > 2000 && !qrScanTimeout) {
+        setQrScanTimeout(true)
+        setQrScanStatus("No QR code detected. Please try again.")
+        return
+      }
+
       // Try to detect QR code (Enrollment Number)
       const detectedAppNumber = detectQRCode()
 
       if (detectedAppNumber) {
-        console.log("QR Code detected:", detectedAppNumber)
-        setQrScanStatus("✅ QR Code detected! Validating Enrollment Number...")
-        processApplicationNumber(detectedAppNumber)
-      } else {
-        setQrScanStatus(`🔍 Scanning for QR code... (${availableStudents.length} students in database)`)
+        console.log("🎯 QR Code detected instantly:", detectedAppNumber)
+        setQrScanStatus("🎯 QR Code detected! Processing...")
+        setQrScanTimeout(false)
+        // Add a brief delay to show detection feedback
+        setTimeout(() => {
+          processApplicationNumber(detectedAppNumber)
+        }, 200)
+      } else if (!qrScanTimeout) {
+        setQrScanStatus(`🔍 Scanning for QR code... (${availableStudents.length} students loaded)`)
       }
-    }, 500) // Scan every 500ms for better responsiveness
+    }, 100) // Scan every 100ms for instant detection
+  }
+
+  // Try Again QR Scanning
+  const tryAgainQRScan = () => {
+    setQrScanTimeout(false)
+    setScanStartTime(Date.now())
+    setQrScanStatus("🔄 Restarting QR scan...")
+    console.log("🔄 Restarting QR scan process...")
   }
 
   // Stop QR Scanner
@@ -384,7 +503,8 @@ export default function IDCardStation() {
     }
 
     setQrScannerActive(false)
-    setScanningForQR(false)
+    setQrScanTimeout(false)
+    setScanStartTime(null)
     setQrScanStatus("")
   }
 
@@ -470,6 +590,9 @@ export default function IDCardStation() {
       console.log(`✅ Enrollment Number Validated: ${validation.student.name}`)
       console.log(`Student Details: ${validation.student.class}, ${validation.student.department}`)
       console.log(`Student Image Available: ${validation.student.image_url ? 'Yes' : 'No'}`)
+
+      // 🔊 Check if this will be an entry (first scan today) and speak welcome message immediately
+      checkAndSpeakEntryMessage(validation.student)
 
       // Auto-start face verification after successful QR validation
       setTimeout(() => {
@@ -683,7 +806,7 @@ export default function IDCardStation() {
       // Simple face detection based on skin tone and movement
       let skinPixels = 0
       let totalPixels = data.length / 4
-      let movementDetected = false
+      // let movementDetected = false // Commented out as not used
       let brightnessVariation = 0
 
       // Analyze pixels for skin tone detection
@@ -895,10 +1018,20 @@ export default function IDCardStation() {
       setTodayEntries(todaysEntries)
 
       const entryType = newEntry.status === "entry" ? "Entry" : "Exit"
+      const isEntry = newEntry.status === "entry"
+
       console.log(`✅ ${entryType} recorded for ${currentStudent.name}`)
       console.log(`Entry ID: ${newEntry.id}`)
       console.log(`Verification Score: ${faceMatchScore}%`)
       console.log(`Timestamp: ${new Date().toLocaleString()}`)
+
+      // 🔊 Only speak exit message here (welcome message was already spoken during QR validation)
+      if (!isEntry) {
+        const studentName = currentStudent.name || "Student"
+        console.log(`🔊 Speaking exit message after face verification for ${studentName}`)
+        console.log(`🔊 Student object:`, currentStudent)
+        speakMessage(studentName, false)
+      }
 
       // Show success notification
       setQrScanStatus(`✅ ${entryType} recorded successfully for ${currentStudent.name}`)
@@ -1136,25 +1269,31 @@ export default function IDCardStation() {
                         <div className="relative">
                           <video
                             ref={qrVideoRef}
-                            className="w-full h-48 sm:h-64 object-cover rounded border"
+                            className="w-full h-64 sm:h-80 object-cover rounded border"
                             autoPlay
                             muted
                             playsInline
                           />
                           <div className="absolute top-2 left-2 bg-black/70 text-white px-2 py-1 rounded text-xs">
-                            QR Scanner Active
+                            🎯 QR Scanner Active (Google Lens Style)
                           </div>
-                          {scanningForQR && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="border-4 border-green-500 border-dashed rounded-lg w-56 h-56 flex items-center justify-center bg-black/10">
-                                <div className="text-center text-white">
-                                  <QrCode className="h-16 w-16 mx-auto mb-3 text-green-400" />
-                                  <p className="text-lg font-semibold">Point Camera Here</p>
-                                  <p className="text-sm">QR Code with Enrollment Number</p>
-                                  <div className="mt-2 px-3 py-1 bg-green-500/80 rounded-full text-xs">
-                                    Auto-scanning active
-                                  </div>
-                                </div>
+
+
+                          {/* Try Again Button - Shows after 2 seconds if no QR detected */}
+                          {qrScanTimeout && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                              <div className="bg-white rounded-lg p-6 text-center shadow-lg">
+                                <QrCode className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+                                <p className="text-lg font-semibold text-gray-800 mb-2">No QR Code Detected</p>
+                                <p className="text-sm text-gray-600 mb-4">Please position QR code in camera view</p>
+                                <Button
+                                  onClick={tryAgainQRScan}
+                                  className="w-full"
+                                  variant="default"
+                                >
+                                  <RotateCcw className="mr-2 h-4 w-4" />
+                                  Try Again
+                                </Button>
                               </div>
                             </div>
                           )}
@@ -1176,7 +1315,7 @@ export default function IDCardStation() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        <div className="h-64 flex items-center justify-center bg-gray-100 rounded border">
+                        <div className="h-80 flex items-center justify-center bg-gray-100 rounded border">
                           <div className="text-center">
                             <QrCode className="h-16 w-16 mx-auto text-gray-400 mb-2" />
                             <p className="text-gray-600 font-medium">Step 1: Scan QR Code First</p>
@@ -1347,7 +1486,14 @@ export default function IDCardStation() {
                   {cameraActive ? (
                     <div className="space-y-4">
                       <div className="relative">
-                        <video ref={videoRef} className="w-full h-48 sm:h-64 object-cover rounded" autoPlay muted playsInline />
+                        <video
+                          ref={videoRef}
+                          className="w-full h-64 sm:h-80 object-cover rounded"
+                          autoPlay
+                          muted
+                          playsInline
+                          style={{ transform: 'scaleX(1)' }} // Turn off mirror mode
+                        />
                         <div className="absolute top-2 right-2 bg-black/50 text-white px-2 py-1 rounded text-xs">
                           Live Camera
                         </div>
@@ -1453,7 +1599,7 @@ export default function IDCardStation() {
                       )}
                     </div>
                   ) : (
-                    <div className="h-64 flex items-center justify-center text-gray-500">
+                    <div className="h-80 flex items-center justify-center text-gray-500">
                       <div className="text-center">
                         <Camera className="h-12 w-12 mx-auto mb-2 opacity-50" />
                         <p>Face Camera Ready</p>
@@ -1483,26 +1629,7 @@ export default function IDCardStation() {
                     </Button>
                   )}
 
-                  {/* Camera Test Button for Debugging */}
-                  {verificationStatus === "idle" && qrValidated && (
-                    <Button
-                      onClick={async () => {
-                        try {
-                          const stream = await navigator.mediaDevices.getUserMedia({ video: true })
-                          alert("✅ Camera test successful! Camera is working.")
-                          stream.getTracks().forEach(track => track.stop())
-                        } catch (error) {
-                          console.error("Camera test failed:", error)
-                          alert(`❌ Camera test failed: ${error.message}`)
-                        }
-                      }}
-                      className="w-full"
-                      variant="outline"
-                      size="sm"
-                    >
-                      🔧 Test Camera Access
-                    </Button>
-                  )}
+
 
                   {verificationStatus === "success" && (
                     <Alert className="border-green-200 bg-green-50">
@@ -1642,7 +1769,7 @@ export default function IDCardStation() {
               <Card className="bg-red-50 border-red-200">
                 <CardContent className="p-4 sm:p-6 text-center">
                   <div className="text-3xl sm:text-4xl font-bold text-red-600 mb-2">
-                    {todayEntries.filter(e => e.exitTime || e.exit_time).length}
+                    {todayEntries.filter(e => e.exitTime).length}
                   </div>
                   <div className="text-sm sm:text-base font-medium text-red-700">
                     Total Exits
@@ -1711,19 +1838,14 @@ export default function IDCardStation() {
               </div>
 
               <div className="space-y-4">
-                {console.log("🔍 Today's Entries Debug:", {
-                  totalEntries: todayEntries.length,
-                  entriesWithExit: todayEntries.filter(e => e.exitTime || e.exit_time).length,
-                  sampleEntry: todayEntries[0],
-                  allEntries: todayEntries
-                })}
+
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div className="bg-green-50 p-4 rounded-lg">
                     <p className="text-3xl font-bold text-green-600">{todayEntries.length}</p>
                     <p className="text-sm text-green-700">Total Entries</p>
                   </div>
                   <div className="bg-red-50 p-4 rounded-lg">
-                    <p className="text-3xl font-bold text-red-600">{todayEntries.filter(e => e.exitTime || e.exit_time).length}</p>
+                    <p className="text-3xl font-bold text-red-600">{todayEntries.filter(e => e.exitTime).length}</p>
                     <p className="text-sm text-red-700">Total Exits</p>
                   </div>
                 </div>

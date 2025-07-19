@@ -57,12 +57,21 @@ export async function GET(req: NextRequest) {
         nodeEnv: process.env.NODE_ENV
       }
     })
-  } catch (error) {
-    console.error("MongoDB test error:", error)
-    return NextResponse.json({ 
-      status: "error", 
+  } catch (error: any) {
+    console.error("❌ MongoDB test error:", error)
+
+    return NextResponse.json({
+      status: "error",
       message: "MongoDB connection failed",
-      error: error instanceof Error ? error.message : "Unknown error"
-    })
+      error: error.message,
+      code: error.code,
+      codeName: error.codeName,
+      details: {
+        name: error.name,
+        cause: error.cause?.message,
+        mongoUri: process.env.MONGODB_URI ? 'Present' : 'Missing',
+        maskedUri: process.env.MONGODB_URI?.replace(/\/\/.*:.*@/, '//***:***@')
+      }
+    }, { status: 500 })
   }
 }

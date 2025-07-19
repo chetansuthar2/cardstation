@@ -16,28 +16,41 @@ export async function GET(req: NextRequest) {
     const phone = url.searchParams.get("phone")
 
     if (!clientPromise) {
-      // MongoDB not available, return empty array
       console.log("MongoDB not available, returning empty students array")
       return NextResponse.json([])
     }
 
-    const client = await clientPromise
-    const db = client.db("idcard")
-    const students = db.collection("students")
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('MongoDB connection timeout')), 5000)
+    })
 
-    const query: any = {}
-    if (appNumber) query.application_number = appNumber
-    if (phone) query.phone = phone
+    try {
+      const client = await Promise.race([clientPromise, timeoutPromise])
+      if (!client) {
+        console.log("MongoDB client is null, returning empty array")
+        return NextResponse.json([])
+      }
 
-    const results = await students.find(query).sort({ createdAt: -1 }).toArray()
-    const data = results.map((s) => ({
-      ...s,
-      id: s._id.toString(),
-    }))
-    return NextResponse.json(data)
+      const db = client.db("idcard")
+      const students = db.collection("students")
+
+      const query: any = {}
+      if (appNumber) query.application_number = appNumber
+      if (phone) query.phone = phone
+
+      const results = await students.find(query).sort({ createdAt: -1 }).toArray()
+      const data = results.map((s) => ({
+        ...s,
+        id: s._id.toString(),
+      }))
+      return NextResponse.json(data)
+    } catch (connectionError) {
+      console.error("MongoDB connection failed:", connectionError)
+      return NextResponse.json([])
+    }
   } catch (error) {
     console.error("GET /api/students error:", error)
-    // Return empty array instead of error for better UX
     return NextResponse.json([])
   }
 }

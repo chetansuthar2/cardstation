@@ -15,28 +15,39 @@ export async function GET(req: NextRequest) {
     const studentId = url.searchParams.get("student_id")
 
     if (!clientPromise) {
-      // MongoDB not available, return empty array - no test data
       console.log("MongoDB not available, returning empty entries array")
       return NextResponse.json([])
     }
 
-    const client = await clientPromise
-    if (!client) {
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('MongoDB connection timeout')), 5000)
+    })
+
+    try {
+      const client = await Promise.race([clientPromise, timeoutPromise])
+      if (!client) {
+        console.log("MongoDB client is null, returning empty array")
+        return NextResponse.json([])
+      }
+
+      const db = client.db("idcard")
+      const entries = db.collection("entry_logs")
+
+      const query: any = {}
+      if (studentId) query.student_id = studentId
+
+      const results = await entries.find(query).sort({ entry_time: -1 }).toArray()
+      const data = results.map((e) => ({
+        ...e,
+        id: e._id.toString(),
+      }))
+      return NextResponse.json(data)
+    } catch (connectionError) {
+      console.error("MongoDB connection failed:", connectionError)
+      // Return empty array instead of error for better UX
       return NextResponse.json([])
     }
-
-    const db = client.db("idcard")
-    const entries = db.collection("entry_logs")
-
-    const query: any = {}
-    if (studentId) query.student_id = studentId
-
-    const results = await entries.find(query).sort({ entry_time: -1 }).toArray()
-    const data = results.map((e) => ({
-      ...e,
-      id: e._id.toString(),
-    }))
-    return NextResponse.json(data)
 
     // MongoDB code commented out for testing - uncomment when MongoDB is available
     /*
